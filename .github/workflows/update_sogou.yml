@@ -16,6 +16,7 @@ jobs:
     - name: Checkout repo
       uses: actions/checkout@v4
 
+    # 虽然 Linux 版通常是独立发布的，但安装 .NET 运行时作为保险
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
@@ -25,17 +26,17 @@ jobs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        mkdir tool
+        mkdir -p tool
         echo "🔍 Fetching latest release from studyzy/imewlconverter..."
         
-        # 精确下载 linux-x64 版本
+        # 下载 Linux x64 版本
         gh release download --repo studyzy/imewlconverter -p "*linux-x64.tar.gz" -D tool
         
         echo "📦 Extracting..."
         tar -xvf tool/*linux-x64.tar.gz -C tool
         
-        # 打印文件列表以供调试（这一步非常重要，能让我们在日志里看到到底解压出了什么）
-        echo "📂 File list in tool directory:"
+        # 调试：再次打印文件列表，确保万无一失
+        echo "📂 File list:"
         ls -R tool
 
     - name: Download Sogou Scel
@@ -46,40 +47,33 @@ jobs:
       run: |
         mkdir -p output
         
-        echo "🔍 Searching for converter binary..."
+        echo "🔍 Locating ImeWlConverterCmd..."
         
-        # 1. 尝试查找 Linux 可执行文件 (无后缀, 忽略大小写)
-        # -type f: 必须是文件
-        # -iname: 忽略大小写匹配
-        # ! -name "*.*": 排除带后缀的文件(比如 .dll, .config)
-        EXE_PATH=$(find tool -type f -iname "imewlconverter" ! -name "*.*" | head -n 1)
+        # 使用 find 命令查找名为 ImeWlConverterCmd 的文件
+        # -type f: 找文件
+        # -name: 精确匹配文件名 (忽略大小写以防万一)
+        EXE_PATH=$(find tool -type f -iname "ImeWlConverterCmd" | head -n 1)
         
-        # 2. 如果没找到可执行文件，尝试找 .dll (兼容旧版本)
         if [ -z "$EXE_PATH" ]; then
-            DLL_PATH=$(find tool -type f -iname "imewlconverter.dll" | head -n 1)
-        fi
-        
-        # 开始转换逻辑
-        if [ -n "$EXE_PATH" ]; then
-            echo "✅ Found Executable: $EXE_PATH"
-            chmod +x "$EXE_PATH"
-            "$EXE_PATH" -i:scel sogou.scel -o:rime temp_body.yaml
-            
-        elif [ -n "$DLL_PATH" ]; then
-            echo "✅ Found DLL: $DLL_PATH"
-            dotnet "$DLL_PATH" -i:scel sogou.scel -o:rime temp_body.yaml
-            
-        else
-            echo "❌ Error: Could not find 'ImeWlConverter' executable or 'ImeWlConverter.dll' in tool directory."
-            echo "Please check the 'File list' step logs above."
+            echo "❌ CRITICAL ERROR: Could not find 'ImeWlConverterCmd'!"
+            echo "Please check the 'File list' log above."
             exit 1
         fi
+        
+        echo "✅ Found Binary at: $EXE_PATH"
+        
+        # 赋予执行权限
+        chmod +x "$EXE_PATH"
+        
+        # 直接运行二进制文件 (不需要 dotnet 命令前缀)
+        "$EXE_PATH" -i:scel sogou.scel -o:rime temp_body.yaml
 
     - name: Add Rime Header
       run: |
         OUT_FILE="output/sogou_pop.dict.yaml"
         CURRENT_DATE=$(date +%Y-%m-%d)
         
+        # 写入标准 Rime 头
         cat <<EOF > $OUT_FILE
         ---
         name: sogou_pop
@@ -89,10 +83,16 @@ jobs:
 
         EOF
         
-        cat temp_body.yaml >> $OUT_FILE
-        
-        rm sogou.scel temp_body.yaml
-        rm -rf tool
+        # 检查是否生成了临时文件
+        if [ -f "temp_body.yaml" ]; then
+            cat temp_body.yaml >> $OUT_FILE
+            rm sogou.scel temp_body.yaml
+            rm -rf tool
+            echo "✅ Conversion successful!"
+        else
+            echo "❌ Error: temp_body.yaml was not generated."
+            exit 1
+        fi
 
     - name: Commit and Push
       uses: stefanzweifel/git-auto-commit-action@v5
