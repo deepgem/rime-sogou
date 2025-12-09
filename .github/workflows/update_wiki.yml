@@ -55,6 +55,9 @@ jobs:
           # 这里假设你已经按建议修改为 VERSION ?= ...，如果原样保持 VERSION= 也可以匹配
           sed -i "s/^VERSION.*/VERSION ?= $NEW_VER/" Makefile
           
+          # 给脚本赋予执行权限
+          chmod +x *.py
+          
           # 开始下载并构建
           echo "Building version $NEW_VER..."
           make all
