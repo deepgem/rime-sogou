@@ -1,0 +1,16 @@
+# 忽略下载的原始数据
+*.gz
+*.source
+*.raw
+*.tmp
+
+# 忽略生成的词库文件
+*.dict
+*.dict.yaml
+
+# 忽略中间文件
+web-slang*
+zhwiki*
+zhwiktionary*
+
+# 这里的逻辑是：只保留脚本和 Makefile，其他生成的东西一律不进 git 历史
