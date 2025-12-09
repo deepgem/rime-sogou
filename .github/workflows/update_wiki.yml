@@ -1,0 +1,87 @@
+name: Auto Update Wiki Dictionary
+
+on:
+  schedule:
+    # 这里的语法是 cron: '分 时 日 月 星期'
+    # UTC 时间 1:00 对应北京时间 9:00
+    - cron: '0 1 * * 1,3,5'
+  workflow_dispatch: # 允许手动点按钮触发测试
+
+jobs:
+  update-and-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          # 安装构建所需的工具：libime (Fcitx5核心库), wget, python3, etc.
+          # 注意：Ubuntu 仓库里的 libime-bin 可能不是最新的，但通常够用。
+          # 如果需要最新版，可能需要编译安装或使用第三方 PPA，这里使用默认源。
+          sudo apt-get install -y libime-bin python3 wget gzip git
+
+      - name: Check for latest upstream version
+        id: check_version
+        run: |
+          # 1. 获取 dumps 页面内容
+          # 2. 提取类似 2025xxxx 的日期格式
+          # 3. 降序排列并取第一个，即为最新版本
+          LATEST_VERSION=$(curl -s https://dumps.wikimedia.org/zhwiki/ | grep -oE '20[0-9]{6}' | sort -rn | head -n 1)
+          
+          echo "Latest upstream version: $LATEST_VERSION"
+          
+          # 读取当前 Makefile 中的版本
+          CURRENT_VERSION=$(grep "VERSION ?=" Makefile | awk '{print $3}') || $(grep "VERSION=" Makefile | awk '{print $2}')
+          echo "Current local version: $CURRENT_VERSION"
+          
+          if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
+            echo "New version detected!"
+            echo "has_update=true" >> $GITHUB_OUTPUT
+            echo "version=$LATEST_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "Already up to date."
+            echo "has_update=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update Makefile and Build
+        if: steps.check_version.outputs.has_update == 'true'
+        run: |
+          NEW_VER=${{ steps.check_version.outputs.version }}
+          
+          # 使用 sed 更新 Makefile 中的版本号
+          # 这里假设你已经按建议修改为 VERSION ?= ...，如果原样保持 VERSION= 也可以匹配
+          sed -i "s/^VERSION.*/VERSION ?= $NEW_VER/" Makefile
+          
+          # 开始下载并构建
+          echo "Building version $NEW_VER..."
+          make all
+          
+          # 如果你也需要 Rime 的 yaml 文件
+          make build_rime_dict
+
+      - name: Commit and Push changes
+        if: steps.check_version.outputs.has_update == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          git add Makefile
+          git commit -m "chore: auto update to version ${{ steps.check_version.outputs.version }}"
+          
+          # 推送修改回仓库
+          git push
+
+      - name: Create Release (Optional)
+        if: steps.check_version.outputs.has_update == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.check_version.outputs.version }}
+          name: Dictionary Update ${{ steps.check_version.outputs.version }}
+          files: |
+            *.dict
+            *.dict.yaml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
