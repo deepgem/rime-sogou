@@ -1,0 +1,107 @@
+name: Update Sogou Hotwords
+
+# 触发机制：
+# 1. 定时：北京时间每天早上 6:00 (UTC 22:00)
+# 2. 手动：可以在 Actions 页面手动点击触发
+on:
+  schedule:
+    - cron: '0 22 * * *'
+  workflow_dispatch:
+
+# 赋予写权限以便提交代码
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # 1. 检出代码
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    # 2. 配置 .NET 环境
+    # ImewlConverter 基于 .NET 开发，推荐使用 .NET 8 (LTS)
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    # 3. 动态下载最新版 ImewlConverter (Linux-x64)
+    # 使用 gh 命令行工具，它会自动解析 "latest" 标签
+    - name: Download Latest ImewlConverter
+      env:
+        GH_TOKEN: ${{ github.token }} # gh 命令需要 token，GitHub 会自动提供
+      run: |
+        mkdir tool
+        echo "🔍 Fetching latest release from studyzy/imewlconverter..."
+        
+        # ⚠️ 关键修正：使用 -p "*linux-x64.tar.gz" 精确匹配 x64 版本
+        # 避免下载到 arm64 版本导致无法运行
+        gh release download --repo studyzy/imewlconverter -p "*linux-x64.tar.gz" -D tool
+        
+        # 解压下载的文件
+        echo "📦 Extracting..."
+        tar -xvf tool/*linux-x64.tar.gz -C tool
+        
+        # 列出文件结构以供调试
+        ls -R tool
+
+    # 4. 下载搜狗网络流行新词 Scel 文件
+    - name: Download Sogou Scel
+      run: |
+        # id=4 是网络流行新词
+        wget -O sogou.scel "https://pinyin.sogou.com/d/dict/download_cell.php?id=4&name=网络流行新词"
+
+    # 5. 执行转换 (Scel -> Rime)
+    - name: Convert to Rime
+      run: |
+        mkdir -p output
+        
+        # 动态定位 DLL 文件路径
+        # 防止解压后目录结构变化（例如多了一层文件夹）导致找不到文件
+        DLL_PATH=$(find tool -name "ImeWlConverter.dll" | head -n 1)
+        
+        if [ -z "$DLL_PATH" ]; then
+          echo "❌ Error: ImeWlConverter.dll not found!"
+          exit 1
+        fi
+        
+        echo "🛠 Using converter at: $DLL_PATH"
+        
+        # 执行转换
+        # -i:scel 输入格式
+        # -o:rime 输出格式
+        dotnet "$DLL_PATH" -i:scel sogou.scel -o:rime temp_body.yaml
+
+    # 6. 添加 Rime 标准头信息并整合
+    - name: Add Rime Header
+      run: |
+        OUT_FILE="output/sogou_pop.dict.yaml"
+        CURRENT_DATE=$(date +%Y-%m-%d)
+        
+        # 写入标准 Rime 头
+        # 这里的 EOF 块用于一次性写入多行文本
+        cat <<EOF > $OUT_FILE
+        ---
+        name: sogou_pop
+        version: "$CURRENT_DATE"
+        sort: by_weight
+        ...
+
+        EOF
+        
+        # 追加转换后的词条内容
+        cat temp_body.yaml >> $OUT_FILE
+        
+        # 清理临时文件
+        rm sogou.scel temp_body.yaml
+        rm -rf tool
+
+    # 7. 提交更改到仓库
+    - name: Commit and Push
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: "chore: auto update hotwords ($CURRENT_DATE)"
+        file_pattern: output/*.yaml
