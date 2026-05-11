@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+# 全局环境变量，用于解决 Node.js 20 警告并传递日期
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -16,7 +20,6 @@ jobs:
     - name: Checkout repo
       uses: actions/checkout@v4
 
-    # 虽然 Linux 版通常是独立发布的，但安装 .NET 运行时作为保险
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
@@ -28,14 +31,9 @@ jobs:
       run: |
         mkdir -p tool
         echo "🔍 Fetching latest release from studyzy/imewlconverter..."
-        
-        # 下载 Linux x64 版本
         gh release download --repo studyzy/imewlconverter -p "*linux-x64.tar.gz" -D tool
-        
         echo "📦 Extracting..."
         tar -xvf tool/*linux-x64.tar.gz -C tool
-        
-        # 调试：再次打印文件列表，确保万无一失
         echo "📂 File list:"
         ls -R tool
 
@@ -46,34 +44,27 @@ jobs:
     - name: Convert to Rime
       run: |
         mkdir -p output
-        
         echo "🔍 Locating ImeWlConverterCmd..."
         
-        # 使用 find 命令查找名为 ImeWlConverterCmd 的文件
-        # -type f: 找文件
-        # -name: 精确匹配文件名 (忽略大小写以防万一)
         EXE_PATH=$(find tool -type f -iname "ImeWlConverterCmd" | head -n 1)
         
         if [ -z "$EXE_PATH" ]; then
             echo "❌ CRITICAL ERROR: Could not find 'ImeWlConverterCmd'!"
-            echo "Please check the 'File list' log above."
             exit 1
         fi
         
         echo "✅ Found Binary at: $EXE_PATH"
-        
-        # 赋予执行权限
         chmod +x "$EXE_PATH"
         
-        # 直接运行二进制文件 (不需要 dotnet 命令前缀)
-        "$EXE_PATH" -i:scel sogou.scel -o:rime temp_body.yaml
+        # --- 修复后的新命令格式 ---
+        # 使用新格式：-i [输入格式] -o [输出格式] -O [输出文件] [输入文件]
+        "$EXE_PATH" -i scel -o rime -O temp_body.yaml sogou.scel
 
     - name: Add Rime Header
       run: |
         OUT_FILE="output/sogou_pop.dict.yaml"
         CURRENT_DATE=$(date +%Y-%m-%d)
         
-        # 写入标准 Rime 头
         cat <<EOF > $OUT_FILE
         ---
         name: sogou_pop
@@ -83,7 +74,6 @@ jobs:
 
         EOF
         
-        # 检查是否生成了临时文件
         if [ -f "temp_body.yaml" ]; then
             cat temp_body.yaml >> $OUT_FILE
             rm sogou.scel temp_body.yaml
@@ -97,5 +87,5 @@ jobs:
     - name: Commit and Push
       uses: stefanzweifel/git-auto-commit-action@v5
       with:
-        commit_message: "chore: auto update hotwords ($CURRENT_DATE)"
+        commit_message: "chore: auto update hotwords ($(date +%Y-%m-%d))"
         file_pattern: output/*.yaml
