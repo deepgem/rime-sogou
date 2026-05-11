@@ -8,10 +8,6 @@ on:
 permissions:
   contents: write
 
-# 解决 Node.js 20 弃用警告
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -20,7 +16,6 @@ jobs:
     - name: Checkout repo
       uses: actions/checkout@v4
 
-    # 显式安装 .NET 8 运行时，确保 dll 能够正常运行
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
@@ -31,13 +26,12 @@ jobs:
         GH_TOKEN: ${{ github.token }}
       run: |
         mkdir -p tool
-        echo "🔍 Fetching latest .NET 8.0 release from studyzy/imewlconverter..."
+        echo "🔍 Fetching latest release from studyzy/imewlconverter..."
         
-        # 下载 net8.0 版本的 zip 包，以避开 linux-x64 二进制文件的兼容性 Bug
-        gh release download --repo studyzy/imewlconverter -p "*net8.0.zip" -D tool
+        gh release download --repo studyzy/imewlconverter -p "*linux-x64.tar.gz" -D tool
         
-        echo "📦 Unzipping..."
-        unzip tool/*net8.0.zip -d tool
+        echo "📦 Extracting..."
+        tar -xvf tool/*linux-x64.tar.gz -C tool
         
         echo "📂 File list:"
         ls -R tool
@@ -49,21 +43,21 @@ jobs:
     - name: Convert to Rime
       run: |
         mkdir -p output
-        echo "🔍 Locating ImeWlConverterCmd.dll..."
         
-        # 跨平台版通过 .dll 文件运行
-        DLL_PATH=$(find tool -type f -name "ImeWlConverterCmd.dll" | head -n 1)
+        echo "🔍 Locating ImeWlConverterCmd..."
         
-        if [ -z "$DLL_PATH" ]; then
-            echo "❌ CRITICAL ERROR: Could not find 'ImeWlConverterCmd.dll'!"
+        EXE_PATH=$(find tool -type f -iname "ImeWlConverterCmd" | head -n 1)
+        
+        if [ -z "$EXE_PATH" ]; then
+            echo "❌ CRITICAL ERROR: Could not find 'ImeWlConverterCmd'!"
+            echo "Please check the 'File list' log above."
             exit 1
         fi
         
-        echo "✅ Found DLL at: $DLL_PATH"
+        echo "✅ Found Binary at: $EXE_PATH"
+        chmod +x "$EXE_PATH"
         
-        # 使用符合新版本要求的 GNU 风格参数格式
-        # 格式：-i [输入格式] -o [输出格式] -O [输出路径] [输入路径]
-        dotnet "$DLL_PATH" -i scel -o rime -O temp_body.yaml sogou.scel
+        "$EXE_PATH" -i scel -o rime -O temp_body.yaml sogou.scel
 
     - name: Add Rime Header
       run: |
@@ -92,6 +86,5 @@ jobs:
     - name: Commit and Push
       uses: stefanzweifel/git-auto-commit-action@v5
       with:
-        # 直接使用 shell 表达式获取日期，确保提交信息准确
-        commit_message: "chore: auto update hotwords ($(date +%Y-%m-%d))"
+        commit_message: "chore: auto update hotwords ($CURRENT_DATE)"
         file_pattern: output/*.yaml
