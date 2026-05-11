@@ -3,7 +3,7 @@ name: Update Sogou Hotwords
 on:
   schedule:
     - cron: '0 22 * * *'  # 北京时间 06:00
-  workflow_dispatch:      # 允许手动触发
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout repo
       uses: actions/checkout@v4
@@ -21,20 +21,10 @@ jobs:
       with:
         dotnet-version: '8.0.x'
 
-    - name: Download Latest ImewlConverter
-      env:
-        GH_TOKEN: ${{ github.token }}
+    - name: Install ImewlConverter via dotnet tool
       run: |
-        mkdir -p tool
-        echo "🔍 Fetching latest release from studyzy/imewlconverter..."
-        
-        gh release download --repo studyzy/imewlconverter -p "*linux-x64.tar.gz" -D tool
-        
-        echo "📦 Extracting..."
-        tar -xvf tool/*linux-x64.tar.gz -C tool
-        
-        echo "📂 File list:"
-        ls -R tool
+        dotnet tool install -g imewlconverter
+        echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
 
     - name: Download Sogou Scel
       run: |
@@ -43,27 +33,13 @@ jobs:
     - name: Convert to Rime
       run: |
         mkdir -p output
-        
-        echo "🔍 Locating ImeWlConverterCmd..."
-        
-        EXE_PATH=$(find tool -type f -iname "ImeWlConverterCmd" | head -n 1)
-        
-        if [ -z "$EXE_PATH" ]; then
-            echo "❌ CRITICAL ERROR: Could not find 'ImeWlConverterCmd'!"
-            echo "Please check the 'File list' log above."
-            exit 1
-        fi
-        
-        echo "✅ Found Binary at: $EXE_PATH"
-        chmod +x "$EXE_PATH"
-        
-        "$EXE_PATH" -i scel -o rime -O temp_body.yaml sogou.scel
+        imewlconverter -i scel -o rime -O temp_body.yaml sogou.scel
 
     - name: Add Rime Header
       run: |
         OUT_FILE="output/sogou_pop.dict.yaml"
         CURRENT_DATE=$(date +%Y-%m-%d)
-        
+
         cat <<EOF > $OUT_FILE
         ---
         name: sogou_pop
@@ -72,11 +48,10 @@ jobs:
         ...
 
         EOF
-        
+
         if [ -f "temp_body.yaml" ]; then
             cat temp_body.yaml >> $OUT_FILE
             rm sogou.scel temp_body.yaml
-            rm -rf tool
             echo "✅ Conversion successful!"
         else
             echo "❌ Error: temp_body.yaml was not generated."
