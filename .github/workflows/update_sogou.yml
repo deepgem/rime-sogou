@@ -3,43 +3,54 @@ name: Update Sogou Hotwords
 on:
   schedule:
     - cron: '0 22 * * *'  # 北京时间 06:00
-  workflow_dispatch:
+  workflow_dispatch:      # 允许手动触发
 
 permissions:
   contents: write
 
+# 解决 Node.js 20 弃用警告
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    
     steps:
     - name: Checkout repo
       uses: actions/checkout@v4
 
-    - name: Setup .NET
+    # 安装完整的 .NET 8 SDK，支持源码直接编译与运行
+    - name: Setup .NET SDK
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8.0.x'
 
-    - name: Install ImewlConverter via dotnet tool
+    # 直接浅克隆最新源码，彻底避开预编译二进制包的裁剪 (Trimming) 兼容性 Bug
+    - name: Clone ImewlConverter Source
       run: |
-        dotnet tool install -g imewlconverter
-        echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+        echo "🔍 Cloning studyzy/imewlconverter source code..."
+        git clone --depth 1 https://github.com/studyzy/imewlconverter.git tool_source
 
     - name: Download Sogou Scel
       run: |
         wget -O sogou.scel "https://pinyin.sogou.com/d/dict/download_cell.php?id=4&name=网络流行新词"
 
-    - name: Convert to Rime
+    # 使用 dotnet run 直接从源码项目启动转换，自动完成依赖恢复和即时编译
+    - name: Convert to Rime via dotnet run
       run: |
         mkdir -p output
-        imewlconverter -i scel -o rime -O temp_body.yaml sogou.scel
+        echo "🚀 Running ImeWlConverter directly from source..."
+        
+        # 参数说明：--project 指定工程文件路径，-- 后面跟随传递给工具的 GNU 风格参数
+        dotnet run --project tool_source/src/ImeWlConverterCmd/ImeWlConverterCmd.csproj -- \
+          -i scel -o rime -O temp_body.yaml sogou.scel
 
     - name: Add Rime Header
       run: |
         OUT_FILE="output/sogou_pop.dict.yaml"
         CURRENT_DATE=$(date +%Y-%m-%d)
-
+        
         cat <<EOF > $OUT_FILE
         ---
         name: sogou_pop
@@ -48,10 +59,11 @@ jobs:
         ...
 
         EOF
-
+        
         if [ -f "temp_body.yaml" ]; then
             cat temp_body.yaml >> $OUT_FILE
             rm sogou.scel temp_body.yaml
+            rm -rf tool_source
             echo "✅ Conversion successful!"
         else
             echo "❌ Error: temp_body.yaml was not generated."
@@ -61,5 +73,5 @@ jobs:
     - name: Commit and Push
       uses: stefanzweifel/git-auto-commit-action@v5
       with:
-        commit_message: "chore: auto update hotwords ($CURRENT_DATE)"
+        commit_message: "chore: auto update hotwords ($(date +%Y-%m-%d))"
         file_pattern: output/*.yaml
