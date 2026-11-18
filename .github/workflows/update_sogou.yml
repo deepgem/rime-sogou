@@ -2,7 +2,7 @@ name: Update Sogou Hotwords
 
 on:
   schedule:
-    - cron: '22 18 * * 2'
+    - cron: '22 23 * * 3'
       timezone: 'Asia/Singapore'
   workflow_dispatch:      # 允许手动触发
 
